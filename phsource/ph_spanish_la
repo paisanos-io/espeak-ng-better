@@ -8,3 +8,29 @@ phoneme T
   ChangePhoneme(s)
 endphoneme
 
+phoneme f
+  vls lbd frc
+  lengthmod 3
+  voicingswitch v
+  Vowelout f1=0  f2=1000 -500 -350  f3=-200 80
+
+  IF nextPh(isPause) THEN
+    WAV(ufric/f_, 180)
+  ENDIF
+  WAV(ufric/f, 150)
+endphoneme
+
+phoneme s
+  vls alv frc sib
+  lengthmod 3
+  voicingswitch z
+  Vowelin  f1=0  f2=1700 -300 300  f3=-100 80
+  Vowelout f1=0  f2=1700 -300 250  f3=-100 80  rms=20
+
+  IF nextPh(isPause) THEN
+    WAV(ufric/s_, 50)
+  ELIF nextPh(p) OR nextPh(t) OR nextPh(k) THEN
+    WAV(ufric/s!, 65)
+  ENDIF
+  WAV(ufric/s, 65)
+endphoneme
