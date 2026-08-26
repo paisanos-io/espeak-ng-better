@@ -111,6 +111,12 @@ unsigned char *out_end;
 
 espeak_ng_OUTPUT_HOOKS* output_hooks = NULL;
 static int const_f0 = 0;
+static int smoothed_pitch = 0;
+
+static int output_last_sample = 0;
+static int output_fade_from = 0;
+static int output_fade_length = 0;
+static int output_fade_position = 0;
 
 // the queue of operations passed to wavegen from sythesize
 intptr_t wcmdq[N_WCMDQ][4];
@@ -337,6 +343,10 @@ void WavegenInit(int rate, int wavemult_fact)
 	samplecount = 0;
 	nsamples = 0;
 	wavephase = 0x7fffffff;
+	smoothed_pitch = 0;
+	output_last_sample = 0;
+	output_fade_length = 0;
+	output_fade_position = 0;
 
 	wdata.amplitude = 32;
 	wdata.amplitude_fmt = 100;
@@ -384,6 +394,34 @@ int GetAmplitude(void)
 	amp = (embedded_value[EMBED_A])*55/100;
 	general_amplitude = amp * amp_emphasis[embedded_value[EMBED_F]] / 16;
 	return general_amplitude;
+}
+
+static void StartOutputCrossfade(void)
+{
+	output_fade_position = 0;
+	output_fade_length = 0;
+	output_fade_from = output_last_sample;
+
+	if (wvoice == NULL || wvoice->pause_fade <= 0)
+		return;
+
+	output_fade_length = (wvoice->pause_fade * samplerate) / 1000;
+	if (output_fade_length < 1)
+		output_fade_length = 1;
+}
+
+static int ApplyOutputCrossfade(int sample)
+{
+	if (output_fade_position < output_fade_length) {
+		int remaining = output_fade_length - output_fade_position;
+		int64_t blended = (int64_t)output_fade_from * remaining;
+		blended += (int64_t)sample * output_fade_position;
+		sample = (int)(blended / output_fade_length);
+		output_fade_position++;
+	}
+
+	output_last_sample = sample;
+	return sample;
 }
 
 static void WavegenSetEcho(void)
@@ -543,12 +581,22 @@ static void AdvanceParameters(void)
 	int x = 0;
 	int ix;
 	static int Flutter_ix = 0;
+	int target_pitch;
 
 	// advance the pitch
 	wdata.pitch_ix += wdata.pitch_inc;
 	if ((ix = wdata.pitch_ix>>8) > 127) ix = 127;
-	if (wdata.pitch_env) x = wdata.pitch_env[ix] * wdata.pitch_range;
-	wdata.pitch = (x>>8) + wdata.pitch_base;
+	if (wdata.pitch_env) {
+		if (wvoice->pitch_smoothing > 0 && ix < 127) {
+			int fraction = wdata.pitch_ix & 0xff;
+			int env_value = (wdata.pitch_env[ix] << 8);
+			env_value += (wdata.pitch_env[ix+1] - wdata.pitch_env[ix]) * fraction;
+			x = (int)(((int64_t)env_value * wdata.pitch_range) >> 8);
+		} else {
+			x = wdata.pitch_env[ix] * wdata.pitch_range;
+		}
+	}
+	target_pitch = (x>>8) + wdata.pitch_base;
 	
 	
 
@@ -559,13 +607,25 @@ static void AdvanceParameters(void)
 		Flutter_ix = 0;
 	x = ((int)(Flutter_tab[Flutter_ix >> 6])-0x80) * flutter_amp;
 	Flutter_ix += Flutter_inc;
-	wdata.pitch += x;
+	target_pitch += x;
 	
 	if(const_f0)
-		wdata.pitch = (const_f0<<12);
+		target_pitch = (const_f0<<12);
 
-	if (wdata.pitch < 102400)
-		wdata.pitch = 102400; // min pitch, 25 Hz  (25 << 12)
+	if (target_pitch < 102400)
+		target_pitch = 102400; // min pitch, 25 Hz  (25 << 12)
+
+	if (wvoice->pitch_smoothing > 0) {
+		int smoothing_step = STEPSIZE * 1000;
+		int smoothing_scale = wvoice->pitch_smoothing * samplerate + smoothing_step;
+		if (smoothed_pitch == 0)
+			smoothed_pitch = target_pitch;
+		smoothed_pitch += (int)(((int64_t)(target_pitch - smoothed_pitch) * smoothing_step) / smoothing_scale);
+		wdata.pitch = smoothed_pitch;
+	} else {
+		wdata.pitch = target_pitch;
+		smoothed_pitch = target_pitch;
+	}
 
 	if (samplecount == samplecount_start)
 		return;
@@ -683,8 +743,12 @@ static int ApplyBreath(void)
 
 static int Wavegen(int length, int modulation, bool resume, frame_t *fr1, frame_t *fr2, voice_t *wvoice)
 {
-	if (resume == false)
+	if (resume == false) {
+		bool starts_after_boundary = (samplecount == 0);
 		SetSynth(length, modulation, fr1, fr2, wvoice);
+		if (starts_after_boundary)
+			StartOutputCrossfade();
+	}
 
 	if (wvoice == NULL)
 		return 0;
@@ -890,6 +954,7 @@ static int Wavegen(int length, int modulation, bool resume, frame_t *fr1, frame_
 			if (ov < agc) agc = ov;
 			z = (z1 * agc) >> 8;
 		}
+		z = ApplyOutputCrossfade(z);
 		*out_ptr++ = z;
 		*out_ptr++ = z >> 8;
 		if(output_hooks && output_hooks->outputVoiced) output_hooks->outputVoiced(z);
@@ -914,12 +979,17 @@ static int PlaySilence(int length, bool resume)
 	if (length == 0)
 		return 0;
 
-	if (resume == false)
+	if (resume == false) {
 		n_samples = length;
+		StartOutputCrossfade();
+		if (length >= samplerate / 100)
+			smoothed_pitch = 0;
+	}
 
 	int value = 0;
 	while (n_samples-- > 0) {
 		value = (echo_buf[echo_tail++] * echo_amp) >> 8;
+		value = ApplyOutputCrossfade(value);
 
 		if (echo_tail >= N_ECHO_BUF)
 			echo_tail = 0;
@@ -948,6 +1018,7 @@ static int PlayWave(int length, bool resume, unsigned char *data, int scale, int
 	if (resume == false) {
 		n_samples = length;
 		ix = 0;
+		StartOutputCrossfade();
 	}
 
 	nsamples = 0;
@@ -973,6 +1044,7 @@ static int PlayWave(int length, bool resume, unsigned char *data, int scale, int
 			value = 32767;
 		else if (value < -32768)
 			value = -32768;
+		value = ApplyOutputCrossfade(value);
 
 		if (echo_tail >= N_ECHO_BUF)
 			echo_tail = 0;
@@ -1072,6 +1144,10 @@ void WavegenSetVoice(voice_t *v)
 
 	memcpy(&v2, v, sizeof(v2));
 	wvoice = &v2;
+	smoothed_pitch = 0;
+	output_last_sample = 0;
+	output_fade_length = 0;
+	output_fade_position = 0;
 
 	if (v->peak_shape == 0)
 		pk_shape = pk_shape1;
@@ -1152,7 +1228,13 @@ static void SetPitch(int length, unsigned char *env, int pitch1, int pitch2)
 
 	SetPitch2(wvoice, pitch1, pitch2, &wdata.pitch_base, &wdata.pitch_range);
 	// set initial pitch
-	wdata.pitch = ((wdata.pitch_env[0] * wdata.pitch_range) >>8) + wdata.pitch_base; // Hz << 12
+	int target_pitch = ((wdata.pitch_env[0] * wdata.pitch_range) >>8) + wdata.pitch_base; // Hz << 12
+	if (wvoice->pitch_smoothing > 0 && smoothed_pitch != 0)
+		wdata.pitch = smoothed_pitch;
+	else {
+		wdata.pitch = target_pitch;
+		smoothed_pitch = target_pitch;
+	}
 
 	flutter_amp = wvoice->flutter;
 }

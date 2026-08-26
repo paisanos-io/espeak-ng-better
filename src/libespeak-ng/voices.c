@@ -272,6 +272,8 @@ void VoiceReset(int tone_only)
 	voice->echo_delay = 0;
 	voice->echo_amp = 0;
 	voice->flutter = 64;
+	voice->pitch_smoothing = 0;
+	voice->pause_fade = 0;
 	voice->n_harmonic_peaks = 5;
 	voice->peak_shape = 0;
 	voice->voicing = 64;
@@ -622,6 +624,20 @@ voice_t *LoadVoice(const char *vname, int control)
             case V_FLUTTER: // flutter
                 if (sscanf(p, "%d", &value) == 1)
                     voice->flutter = value * 32;
+                break;
+            case V_PITCH_SMOOTHING:
+                if (sscanf(p, "%d", &value) == 1) {
+                    if (value < 0) value = 0;
+                    if (value > 100) value = 100;
+                    voice->pitch_smoothing = value;
+                }
+                break;
+            case V_PAUSE_FADE:
+                if (sscanf(p, "%d", &value) == 1) {
+                    if (value < 0) value = 0;
+                    if (value > 20) value = 20;
+                    voice->pause_fade = value;
+                }
                 break;
             case V_ROUGHNESS: // roughness
                 if (sscanf(p, "%d", &value) == 1)

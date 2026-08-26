@@ -13,6 +13,8 @@
   - [echo](#echo)
   - [tone](#tone)
   - [flutter](#flutter)
+  - [pitchSmoothing](#pitchsmoothing)
+  - [pauseFade](#pausefade)
   - [roughness](#roughness)
   - [voicing](#voicing)
   - [consonants](#consonants)
@@ -250,6 +252,27 @@ Default value: 100.
 
 Adds pitch fluctuations to give a wavering or older-sounding voice. A
 large value (eg. 20) makes the voice sound "croaky".
+
+### pitchSmoothing
+
+	pitchSmoothing <milliseconds>
+
+Default value: 0 (disabled). Range: 0 to 100 ms.
+
+Applies linear interpolation and low-pass smoothing to the pitch trajectory.
+This reduces audible pitch steps in high voices while preserving the slower
+intonation changes of a sentence. Values between 10 and 25 ms are suitable for
+natural-sounding voices.
+
+### pauseFade
+
+	pauseFade <milliseconds>
+
+Default value: 0 (disabled). Range: 0 to 20 ms.
+
+Crossfades the boundaries between formant synthesis, sampled consonants, and
+silence. Short values between 2 and 5 ms reduce clicks and abrupt cuts without
+softening consonant attacks excessively.
 
 ### roughness
 

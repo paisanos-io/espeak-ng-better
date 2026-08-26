@@ -46,6 +46,8 @@ typedef struct {
 
 	int speed_percent;      // adjust the WPM speed by this percentage
 	int flutter;
+	int pitch_smoothing;    // pitch smoothing time constant in milliseconds
+	int pause_fade;         // crossfade duration at synthesis boundaries in milliseconds
 	int roughness;
 	int echo_delay;
 	int echo_amp;
@@ -98,6 +100,8 @@ typedef enum {
 	V_PITCH,
 	V_ECHO,
 	V_FLUTTER,
+	V_PITCH_SMOOTHING,
+	V_PAUSE_FADE,
 	V_ROUGHNESS,
 	V_CLARITY,
 	V_TONE,
@@ -168,6 +172,8 @@ static const MNEM_TAB keyword_tab[] = {
 	{ "replace",      V_REPLACE },
 	{ "echo",         V_ECHO },
 	{ "flutter",      V_FLUTTER },
+	{ "pitchSmoothing", V_PITCH_SMOOTHING },
+	{ "pauseFade",     V_PAUSE_FADE },
 	{ "roughness",    V_ROUGHNESS },
 	{ "clarity",      V_CLARITY },
 	{ "tone",         V_TONE },
